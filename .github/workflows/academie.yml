@@ -1,0 +1,58 @@
+name: academie
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  selection:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.target.outputs.matrix }}
+      active: ${{ steps.target.outputs.active }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - id: target
+        name: Choisir les validations demandées
+        run: node academie/checks/_support/selection.mjs academie/module-cible.txt >> "$GITHUB_OUTPUT"
+      - name: Expliquer le départ
+        if: steps.target.outputs.active == 'false'
+        run: echo 'Aucun module soumis. Changez academie/module-cible.txt après avoir travaillé le module 1.' >> "$GITHUB_STEP_SUMMARY"
+  module:
+    needs: selection
+    if: needs.selection.outputs.active == 'true'
+    name: academie/module-${{ matrix.module }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.selection.outputs.matrix) }}
+    services:
+      postgres:
+        image: postgis/postgis:18-3.6
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rides_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Vérifications cumulatives du module ${{ matrix.module }}
+        run: node academie/run.mjs ${{ matrix.module }}
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/rides_test
+          DEPLOYMENT_URL: ${{ secrets.DEPLOYMENT_URL }}
+          DEPLOYMENT_PASSENGER_TOKEN: ${{ secrets.DEPLOYMENT_PASSENGER_TOKEN }}
+          DEPLOYMENT_DRIVER_TOKEN: ${{ secrets.DEPLOYMENT_DRIVER_TOKEN }}

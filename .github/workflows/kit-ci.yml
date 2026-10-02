@@ -1,0 +1,40 @@
+name: kit-ci
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  starter:
+    name: Kit — types, build et santé
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - name: Démarrage de l'API
+        run: |
+          npx tsx src/serveur.ts > /tmp/kit-api.log 2>&1 &
+          api_pid=$!
+          trap 'kill "$api_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent http://localhost:3000/health > /tmp/health.json; then
+              node --input-type=module -e 'import {readFileSync} from "node:fs"; if (JSON.parse(readFileSync("/tmp/health.json", "utf8")).status !== "ok") process.exit(1)'
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/kit-api.log
+          exit 1
